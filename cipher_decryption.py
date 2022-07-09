@@ -1,84 +1,62 @@
-
-import numpy as np
+import unicodedata
 import re
-import copy
 from collections import Counter
-import matplotlib.pyplot as plt
-import seaborn as sns
 import random
 import pickle
 import os
+import numpy as np
+import seaborn as sns
+import pandas as pd
+from matplotlib import pyplot as plt
+
 SEED_VALUE = 42
 random.seed(SEED_VALUE)
 np.random.seed(SEED_VALUE)
-os.environ['PYTHONHASHSEED']=str(SEED_VALUE)
+os.environ['PYTHONHASHSEED'] = str(SEED_VALUE)
 
 
-def encrypt(plaintext, plaintext_alphabet, cipher_alphabet, blacklist={}):
-    assert set(list(plaintext)).difference(blacklist).issubset(
-        set(list(plaintext_alphabet))), "Plaintext must only contain characters in Plaintext alphabet"
-    assert len(plaintext_alphabet) == len(
-        cipher_alphabet), "Cipher alphabet must have same number of characters as Plaintext alphabet"
-
-    enc_key = dict(zip(list(plaintext_alphabet), list(cipher_alphabet)))
-    acc = []
-    for s in plaintext:
-        if s in blacklist:
-            acc += s
-        else:
-            acc += [enc_key[s]]
-    ciphertext = "".join(acc)
-
-    return {'cipher_alphabet': cipher_alphabet,
-            'plaintext_alphabet': plaintext_alphabet,
-            'ciphertext': ciphertext,
-            }
-
-
-def decrypt(ciphertext, plaintext_alphabet, cipher_alphabet, blacklist={}):
-    dec_key = dict(zip(list(cipher_alphabet), list(plaintext_alphabet)))
-    acc = []
-    for s in ciphertext:
-
-        if s in blacklist:
-            acc += [s]
-        else:
-            acc += [dec_key[s]]
-    plaintext = "".join(acc)
-    return {'cipher_alphabet': cipher_alphabet,
-            'plaintext_alphabet': plaintext_alphabet,
-            'plaintext': plaintext,
-            }
-
-
-def process_text(filename, regex_ignore='[^A-Z .]', regularize=True):
+def process_text(filename, regex_ignore='[^\u0590-\u05FF\uFB1D-\uFB4F ]', is_hebrew=True, regularize=True):
     char_bigram_counts = Counter()
     char_unigram_counts = Counter()
 
     with open(filename, encoding='UTF-8') as f:
         counter = 0
-        for line in f:
-            counter += 1
-            if counter % 5000 == 0: print(f"{counter} lines read.")
-            if regex_ignore != None:
-                pattern = re.compile(regex_ignore)
-                s = pattern.sub('', line.upper())
-                s = re.sub(r'[\u0591-\u05BD\u05BF-\u05C2\u05C4-\u05C7]', '', s) #to remove most of the NIKUD in hebrew
-            else:
-                s = line.upper()
+        try:
+            for line in f:
+                counter += 1
+                if counter % 5000 == 0:
+                    print(f"{counter} lines read.")
+                if not regex_ignore:
+                    pattern = re.compile(regex_ignore)
+                    s = pattern.sub('', line.upper())
+                    if is_hebrew:
+                        s = s.translate({1470: " "})
+                        normalized = unicodedata.normalize('NFKD', s)
+                        s = "".join([c for c in normalized if not unicodedata.combining(c)])
+                        temp = ""
+                        for char in s:
+                            if ord(char) not in [1524, 1523, 1522, 1521, 1520, 1518, 1515, 1480, 1472, 1475, 1478]:
+                                temp += char
+                        s = temp
+                else:
+                    s = line.upper()
 
-            line_length = len(s)
+                line_length = len(s)
 
-            # building frequency dict for biagram and unigram.
-            if line_length > 0:
-                for i in range(line_length - 1):
-                    char_bigram_counts[(s[i], s[i + 1])] += 1
-                    char_unigram_counts[s[i]] += 1
+                # building frequency dict for biagram and unigram.
+                if line_length > 0:
+                    for i in range(line_length - 1):
+                        char_bigram_counts[(s[i], s[i + 1])] += 1
+                        char_unigram_counts[s[i]] += 1
 
-                # Add last character in line
-                char_unigram_counts[s[line_length - 1]] += 1
+                    # Add last character in line
+                    char_unigram_counts[s[line_length - 1]] += 1
+        except Exception as e:
+            print(e)
 
-                # Map each unique character from text to an index and vice-versa
+    char_bigram_counts[(' ', ' ')] = 0
+
+    # Map each unique character from text to an index and vice-versa
     i_c_map = dict(enumerate([q[0] for q in sorted(list(char_unigram_counts.items()), key=lambda x: x[0])]))
     c_i_map = {v: k for k, v in i_c_map.items()}
 
@@ -87,7 +65,7 @@ def process_text(filename, regex_ignore='[^A-Z .]', regularize=True):
     M = np.zeros((n, n))
     if regularize:
         M += 1
-    #build the frequency matrix for the biagram letters
+    # build the frequency matrix for the biagram letters
     for k in char_bigram_counts.keys():
         M[c_i_map[k[0]]][c_i_map[k[1]]] = char_bigram_counts[k]
 
@@ -110,33 +88,78 @@ def process_text(filename, regex_ignore='[^A-Z .]', regularize=True):
             }
 
 
-def plausibility(f, char_index_map, cipher, transition_mtx, blacklist={}, print_output=False):
+def read_transition_mat(path, text_file, is_pickle, is_hebrew, regex_ignore):
+    if is_pickle:
+        with open(path + text_file + ".pickle", 'rb') as handle:
+            freq_matrix = pickle.load(handle)
+    else:
+        freq_matrix = process_text(path + text_file, regex_ignore=regex_ignore, is_hebrew=is_hebrew)
+        with open(path + text_file + ".pickle", 'wb') as handle:
+            pickle.dump(freq_matrix, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    P = freq_matrix['transition_matrix']
+    F = freq_matrix['bigram_freq_matrix']
+    i_c_map = freq_matrix['index_character_map']
+    c_i_map = freq_matrix['character_index_map']
+    m = P.shape[0]
+    return freq_matrix, P, F, i_c_map, c_i_map, m
+
+
+def encrypt(plaintext, plaintext_alphabet, cipher_alphabet):
+    assert set(list(plaintext)).issubset(
+        set(list(plaintext_alphabet))), "Plaintext must only contain characters in Plaintext alphabet"
+    assert len(plaintext_alphabet) == len(
+        cipher_alphabet), "Cipher alphabet must have same number of characters as Plaintext alphabet"
+
+    enc_key = dict(zip(list(plaintext_alphabet), list(cipher_alphabet)))
+    acc = []
+    for s in plaintext:
+        acc += [enc_key[s]]
+    ciphertext = "".join(acc)
+
+    return {'cipher_alphabet': cipher_alphabet,
+            'plaintext_alphabet': plaintext_alphabet,
+            'ciphertext': ciphertext,
+            }
+
+
+def decrypt(ciphertext, plaintext_alphabet, cipher_alphabet):
+    dec_key = dict(zip(list(cipher_alphabet), list(plaintext_alphabet)))
+    acc = []
+    for s in ciphertext:
+        acc += [dec_key[s]]
+    plaintext = "".join(acc)
+    return {'cipher_alphabet': cipher_alphabet,
+            'plaintext_alphabet': plaintext_alphabet,
+            'plaintext': plaintext,
+            }
+
+
+def probs_checker(f, char_index_map, cipher, transition_mtx, print_output=False):
     n = len(cipher)
     probs = np.zeros(n - 1)
-    q = len(transition_mtx)
+
     k = []
     v = []
 
     for i, j in f.items():
-        k += [i]
-        v += [j]
+        k.append(i)
+        v.append(j)
 
-    dec = decrypt(cipher, "".join(v), "".join(k), blacklist)['plaintext']
+    dec = decrypt(cipher, "".join(v), "".join(k))['plaintext']
     for i in range(n - 1):
+        char_a = dec[i]
+        char_b = dec[i + 1]
+        idx_a = char_index_map[char_a]
+        idx_b = char_index_map[char_b]
+        probs[i] = transition_mtx[idx_a][idx_b]
 
-        # If bigram contains a character not part of the encryption, assign it a uniform transition prob
-        if dec[i] in blacklist or dec[i + 1] in blacklist:
-            probs[i] = 1 / q
-        else:
-            probs[i] = transition_mtx[c_i_map[dec[i]]][c_i_map[dec[i + 1]]]
+    # Ensures numerical stability
+    probs_sorted = np.sort(probs, kind='quicksort')
 
-        # Ensures numerical stability
-        probs_sorted = np.sort(probs, kind='quicksort')
-
-    return {"score": np.sum(np.log(np.array(probs))), "attempt": dec}
+    return {"score": np.sum(np.log(np.array(probs_sorted))), "attempt": dec}
 
 
-# Accuracy score
 def similarity(s1, s2):
     assert len(s1) == len(s2), "Both strings must be same length"
     n = len(s1)
@@ -144,11 +167,12 @@ def similarity(s1, s2):
     return num_matches / n
 
 
-def solve_mcmc(ciphertext, usual_alphabet, code_space, trans_mtx, char_index_mapping, iters=2500, skip_chars={}):
+def solve_mcmc(ciphertext, usual_alphabet, code_space, trans_mtx, char_index_mapping, message_cleaned, iters=10000):
     # Initialize with a random mapping
     f = dict(zip(list(code_space), list(usual_alphabet)))
 
     scores = [0.0] * iters
+    similarity_scores = [0.0] * iters
     mappings = []
     accepted = 0
     for i in range(0, iters):
@@ -162,15 +186,11 @@ def solve_mcmc(ciphertext, usual_alphabet, code_space, trans_mtx, char_index_map
         f_proposal[r2] = f[r1]
 
         # Decrypt using the current and proposed mapping
-        current = plausibility(f, char_index_mapping, ciphertext, trans_mtx, blacklist=skip_chars)
+        current = probs_checker(f, char_index_mapping, ciphertext, trans_mtx)
         f_prob = current['score']
 
-        # Print out progress
-        if i % 500 == 0:
-            print("iter:", i, current['attempt'][:300])
-
-        f_proposal_prob = plausibility(f_proposal, char_index_mapping, ciphertext, trans_mtx, blacklist=skip_chars)[
-            'score']
+        f_proposal_plaus = probs_checker(f_proposal, char_index_mapping, ciphertext, trans_mtx)
+        f_proposal_prob = f_proposal_plaus['score']
 
         # Decide to accept new proposal
         u = random.uniform(0, 1)
@@ -178,11 +198,26 @@ def solve_mcmc(ciphertext, usual_alphabet, code_space, trans_mtx, char_index_map
             f = f_proposal.copy()
             scores[i] = f_proposal_prob
             accepted += 1
-        elif u < np.exp(f_proposal_prob - f_prob):
+            if (i // 5) == 0:
+                print("iter:", i, f_proposal_plaus['attempt'][:300])
+        if u < np.exp(f_proposal_prob - f_prob):
             f = f_proposal.copy()
             scores[i] = f_proposal_prob
             accepted += 1
-        scores[i] = f_prob
+            if i % 1000 == 0:
+                print("iter:", i, f_proposal_plaus['attempt'][:300])
+            # Print out progress
+        else:
+            scores[i] = f_prob
+
+        plains = []
+        ciphers = []
+        for k in sorted(f.keys()):
+            ciphers += [k]
+            plains += [f[k]]
+        f_key = ("".join(plains), "".join(ciphers))
+        f_dec = decrypt(ciphertext, f_key[0], f_key[1])['plaintext']
+        similarity_scores[i] = similarity(message_cleaned, f_dec)
 
     print("total acceptances: ", accepted)
 
@@ -197,102 +232,107 @@ def solve_mcmc(ciphertext, usual_alphabet, code_space, trans_mtx, char_index_map
         plains += [best_f[k]]
 
     best_key = ("".join(plains), "".join(ciphers))
-    best_attempt = decrypt(ciphertext, best_key[0], best_key[1], blacklist=skip_chars)['plaintext']
+    best_attempt = decrypt(ciphertext, best_key[0], best_key[1])['plaintext']
 
-    print("score:", best_score)
+    # Save best mapping
+    best_f_sim = mappings[np.argmax(similarity_scores)]
+    best_score_sim = max(similarity_scores)
+    plains = []
+    ciphers = []
+    for k in sorted(best_f_sim.keys()):
+        ciphers += [k]
+        plains += [best_f[k]]
+    best_key_sim = ("".join(plains), "".join(ciphers))
+    best_attempt_sim = decrypt(ciphertext, best_key_sim[0], best_key_sim[1])['plaintext']
+
+    print("prob_score:", best_score)
+    print('similairty_score: ', best_score_sim)
+
     return {'num_iters': iters,
             'plaintext': best_attempt,
+            'plaintextbysim': best_attempt_sim,
+            'best_sim_score': best_score_sim,
             'best_score': best_score,
             'best_key': best_f,
+            'best_sim_key': best_key_sim,
             'scores': scores,
+            'sim_scores': similarity_scores,
             'total_acceptances': accepted
             }
 
 
+def plot_scores(scores, similarity_scores):
+    fig, axs = plt.subplots(1, 2, figsize=(20, 10))
+    axs[0].plot(scores)
+    axs[1].plot(similarity_scores)
+    axs[0].set_title('score function')
+    axs[1].set_title('similarity function')
+    fig.show()
+    plt.show()
 
 
-
-IS_HEBREW =  True
-IS_PICKLED = True
-TEXT_FILE = 'wikipedia_1000000.txt'
-# TEXT_FILE = 'war-and-peace.txt'
-# TRAIN_SIZE = re.findall(r'\d+',TEXT_FILE)[0] #in lines
-message = "המלחמה ברצועת עזה נגמרה לגמרי ושלום עולמי שוכן בארץ ישראל אף על פי כך, נדקר טיפוס אחד, המצב בשווקים הדרדר משמעותית בחודש האחרון בעקבות מצב החסה בשטחים"
-# message = "ENTER HAMLET TO BE OR NOT TO BE THAT IS THE QUESTION WHETHER TIS NOBLER IN THE MIND TO SUFFER THE SLINGS AND ARROWS OF OUTRAGEOUS FORTUNE OR TO TAKE ARMS AGAINST A SEA OF TROUBLES AND BY OPPOSING END"
-
-
-PATTERN_HEBREW = '[^\u0590-\u05FF\uFB1D-\uFB4F ]'
-PATTERN_ENGLISH = '[^A-Z ]'
-PATTERN_LANGUAGE = PATTERN_HEBREW if IS_HEBREW else PATTERN_ENGLISH
-pattern = re.compile(PATTERN_LANGUAGE)
-HEB_ALPHABET = "אבגדהוזחטיכךלמםנןסעפףצץקרשת "
-EN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ "
-ALPHABET = HEB_ALPHABET if IS_HEBREW else EN_ALPHABET
-
-message_cleaned = pattern.sub('', message.upper())
-
-# Generate random code space
-letters_of_current_message = "".join(list(set(list(message_cleaned))))
-letters_missing = set(list(ALPHABET)).difference(set(list(letters_of_current_message)))
-if letters_missing:
-    print(f"in your message you missed the following letters: {letters_missing} which may cause inaccuracy prediction")
-alphabet = ALPHABET
-
-tmp = list(alphabet)
-random.shuffle(tmp)
-cipher_alphabet = "".join(tmp)
-
-# Display the true key
-message_enc = encrypt(message_cleaned, alphabet, cipher_alphabet,
-                      #                      blacklist={' ',}
-                      )
-ciphertext = message_enc['ciphertext']
+def plot_transition_matrix(P, i_c_map, is_hebrew=True):
+    data = pd.DataFrame(P)
+    idx_range = range(1, 28) if is_hebrew else range(1, 27)
+    data.columns = ["Space"] + [i_c_map[i] for i in idx_range]
+    data.index = ["Space"] + [i_c_map[i] for i in idx_range]
+    plt.figure(figsize=(20, 10))
+    sns.heatmap(data, cmap="Greens")
+    plt.show()
 
 
-if not IS_PICKLED:
-    # Compute english bigram frequencies from a reference text
-    freq_matrix = process_text("text_files/"+TEXT_FILE, regex_ignore=PATTERN_LANGUAGE)
-    P = freq_matrix['transition_matrix']
-    F = freq_matrix['bigram_freq_matrix']
-    i_c_map = freq_matrix['index_character_map']
-    c_i_map = freq_matrix['character_index_map']
-    # Store data (serialize)
-    with open(f'pickles/freq_matrix_{TEXT_FILE.split(".")[0]}.pickle', 'wb') as handle:
-        pickle.dump(freq_matrix, handle, protocol=pickle.HIGHEST_PROTOCOL)
-else:
-    # Load data (deserialize)
-    with open(f'pickles/freq_matrix_{TEXT_FILE.split(".")[0]}.pickle', 'rb') as handle:
-        freq_matrix = pickle.load(handle)
-        P = freq_matrix['transition_matrix']
-        F = freq_matrix['bigram_freq_matrix']
-        i_c_map = freq_matrix['index_character_map']
-        c_i_map = freq_matrix['character_index_map']
-        m = P.shape[0]
+def run(path, text_file, is_hebrew, is_pickle):
+    ##DEFS
+    PATTERN_HEBREW = '[^\u0590-\u05FF\uFB1D-\uFB4F ]'
+    PATTERN_ENGLISH = '[^A-Z ]'
+    regex_ignore = PATTERN_HEBREW if is_hebrew else PATTERN_ENGLISH
+    pattern = re.compile(regex_ignore)
+    message_heb = "המלחמה ברצועת עזה נגמרה לגמרי ושלום עולמי קיים בארץ ישראל אף על פי כך, נדקר טיפוס אחד, המצב בשווקים הדרדר משמעותית בחודש האחרון בעקבות המצב החמור במושבה מאדים"
+    message_eng = "ENTER HAMLET TO BE OR NOT TO BE THAT IS THE QUESTION WHETHER TIS NOBLER IN THE MIND TO SUFFER THE SLINGS AND ARROWS OF OUTRAGEOUS FORTUNE OR TO TAKE ARMS AGAINST A SEA OF TROUBLES AND BY OPPOSING END"
+    HEB_ALPHABET = "אבגדהוזחטיכךלמםנןסעפףצץקרשת "
+    EN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ "
+    ALPHABET = HEB_ALPHABET if is_hebrew else EN_ALPHABET
+
+    ## CLEAN MESSAGE
+    message = message_heb if is_hebrew else message_eng
+    message_cleaned = pattern.sub('', message.upper())
+    letters_of_current_message = "".join(list(set(list(message_cleaned))))
+    letters_missing = set(list(ALPHABET)).difference(set(list(letters_of_current_message)))
+    if letters_missing:
+        print(
+            f"in your message you missed the following letters: {letters_missing} which may cause inaccuracy prediction")
+
+    ## CREATE CIPHER
+    tmp = list(ALPHABET)
+    random.shuffle(tmp)
+    cipher_alphabet = "".join(tmp)
+    message_enc = encrypt(message_cleaned, ALPHABET, cipher_alphabet)
+    ciphertext = message_enc['ciphertext']
+    ## Get transition matrix
+    freq_matrix, P, F, i_c_map, c_i_map, m = read_transition_mat(path, text_file, is_pickle, is_hebrew, regex_ignore)
+
+    plot_transition_matrix(P, i_c_map, is_hebrew)
+
+    init = list(ALPHABET).copy()
+    random.shuffle(init)
+    mcmc_results = solve_mcmc(ciphertext, ALPHABET, init, P, c_i_map, message_cleaned, iters=50000)
+    print(f"ciphertext:\n\t{ciphertext}\n")
+    print(f"attempted decryption: \n{mcmc_results['plaintext']}\n")
+    print(f"attempted decryption (By sim): \n{mcmc_results['plaintextbysim']}\n")
+
+    print(f"original message: \n {message_cleaned}")
+    ground_truth_score = probs_checker(dict(zip(cipher_alphabet, ALPHABET)), c_i_map, ciphertext, P)
+    print('score of true key:', ground_truth_score['score'])
+    print('similarity score - best prob key:', similarity(message_cleaned, mcmc_results['plaintext']))
+    print('similarity score - best sim score:', similarity(message_cleaned, mcmc_results['plaintextbysim']))
+
+    plot_scores(mcmc_results['scores'], mcmc_results['sim_scores'])
 
 
+## Read Text
+PICKLE = True
+IS_HEBREW = True
 
-
-
-init = list(alphabet).copy()
-random.shuffle(init)
-soln = solve_mcmc(ciphertext, alphabet, init, P, c_i_map, iters=20000)
-print(f"ciphertext:\n\t{ciphertext}\n")
-print(f"attempted decryption: \n{soln['plaintext']}\n")
-
-print(f"original message: \n {message_cleaned}")
-ground_truth_score = plausibility(dict(zip(cipher_alphabet, alphabet)), c_i_map, ciphertext, P)
-print('score of true key:', ground_truth_score['score'])
-print('similarity score:', similarity(message_cleaned, soln['plaintext']))
-
-plt.plot(soln['scores'])
-plt.title('score function')
-plt.show()
-
-#TODO
-# 1. Refactor all of the code:
-# a. encapsulate the code
-# b. refactor the variables names.
-# c. Make a main file which will run the whole program more easily (with a function similar to: run(IS_HEBREW, TEXT_FILE, is_pickled, message):
-# /
-# 2. check if the algorithm is right (read the article before hand)
-# 3. Create the final paper.
+PATH = os.path.dirname(os.path.realpath(__file__))+"/"
+TEXT_FILE = 'haaretz.txt'
+run(PATH, TEXT_FILE, IS_HEBREW, PICKLE)
