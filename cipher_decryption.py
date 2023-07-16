@@ -8,62 +8,110 @@ import numpy as np
 import seaborn as sns
 import pandas as pd
 from matplotlib import pyplot as plt
+from difflib import SequenceMatcher
 
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
 
-def _preprocess_text(text, regex_ignore, is_hebrew):
+def remove_special_characters(line, regex_ignore):
+    if regex_ignore:
+        return line.upper()
+
     pattern = re.compile(regex_ignore)
-    s = pattern.sub('', text.upper())
-    if is_hebrew:
-        s = s.translate({1470: " "})
-        normalized = unicodedata.normalize('NFKD', s)
-        s = "".join([c for c in normalized if not unicodedata.combining(c)])
-        temp = ""
-        for char in s:
-            if ord(char) not in [1524, 1523, 1522, 1521, 1520, 1518, 1515, 1480, 1472, 1475, 1478]:
-                temp += char
-        s = temp
-    return s
+    line = pattern.sub('', line.upper())
+    return line
 
-def _build_frequency_maps(text):
-    char_bigram_counts = Counter()
-    char_unigram_counts = Counter()
-    for i in range(len(text) - 1):
-        char_bigram_counts[(text[i], text[i + 1])] += 1
-        char_unigram_counts[text[i]] += 1
-    char_unigram_counts[text[-1]] += 1
-    return char_bigram_counts, char_unigram_counts
 
-def _build_transition_matrix(char_bigram_counts, character_index_map):
-    n = len(character_index_map)
+def remove_hebrew_special_chars(line):
+    line = line.translate({1470: " "})
+    normalized = unicodedata.normalize('NFKD', line)
+    line = "".join([c for c in normalized if not unicodedata.combining(c)])
+
+    temp = ""
+    for char in line:
+        if ord(char) not in [1524, 1523, 1522, 1521, 1520, 1518, 1515, 1480, 1472, 1475, 1478]:
+            temp += char
+
+    return temp
+
+
+def build_frequency_counts(line, char_bigram_counts, char_unigram_counts):
+    line_length = len(line)
+    if line_length > 0:
+        for i in range(line_length - 1):
+            char_bigram_counts[(line[i], line[i + 1])] += 1
+            char_unigram_counts[line[i]] += 1
+
+        # Add last character in line
+        char_unigram_counts[line[line_length - 1]] += 1
+
+
+def create_index_maps(char_unigram_counts):
+    sorted_chars = sorted(list(char_unigram_counts.items()), key=lambda x: x[0])
+    i_c_map = dict(enumerate([q[0] for q in sorted_chars]))
+    c_i_map = {v: k for k, v in i_c_map.items()}
+    return i_c_map, c_i_map
+
+
+def create_transition_matrix(char_bigram_counts, c_i_map, regularize=True):
+    n = len(c_i_map)
     M = np.zeros((n, n))
-    for k in char_bigram_counts.keys():
-        M[character_index_map[k[0]]][character_index_map[k[1]]] = char_bigram_counts[k]
-    return M
+    if regularize:
+        M += 1
 
-def _replace_zero_rows(M):
+    for k in char_bigram_counts.keys():
+        M[c_i_map[k[0]]][c_i_map[k[1]]] = char_bigram_counts[k]
+
     zero_rows = np.where(M.sum(axis=1) == 0.)
     M[zero_rows, :] = 1
     row_sums = M.sum(axis=1)
     P = M / row_sums[:, np.newaxis]
-    return P, zero_rows
+
+    print(
+        '{0} uniform row(s) inputted for characters {1}'.format(zero_rows[0].size, [i_c_map[z] for z in zero_rows[0]]))
+
+    return P
+
 
 def process_text(filename, regex_ignore='[^\u0590-\u05FF\uFB1D-\uFB4F ]', is_hebrew=True, regularize=True):
-    text = _preprocess_text(open(filename, encoding='UTF-8').read(), regex_ignore, is_hebrew)
-    char_bigram_counts, char_unigram_counts = _build_frequency_maps(text)
-    M = _build_transition_matrix(char_bigram_counts, char_unigram_counts)
-    P, zero_rows = _replace_zero_rows(M)
+    char_bigram_counts = Counter()
+    char_unigram_counts = Counter()
+
+    with open(filename, encoding='UTF-8') as f:
+        counter = 0
+        try:
+            for line in f:
+                counter += 1
+                if counter % 5000 == 0:
+                    print(f"{counter} lines read.")
+
+                line = remove_special_characters(line, regex_ignore)
+
+                if is_hebrew:
+                    line = remove_hebrew_special_chars(line)
+
+                build_frequency_counts(line, char_bigram_counts, char_unigram_counts)
+
+        except Exception as e:
+            print(e)
+
+    char_bigram_counts[(' ', ' ')] = 0
+
+    i_c_map, c_i_map = create_index_maps(char_unigram_counts)
+
+    transition_matrix = create_transition_matrix(char_bigram_counts, c_i_map, regularize)
+
     return {
         'char_bigram_counts': char_bigram_counts,
         'char_unigram_counts': char_unigram_counts,
-        'bigram_freq_matrix': M,
-        'transition_matrix': P,
-        'character_index_map': char_unigram_counts.keys(),
-        'index_character_map': char_unigram_counts.items(),
+        'bigram_freq_matrix': char_bigram_counts,
+        'transition_matrix': transition_matrix,
+        'character_index_map': c_i_map,
+        'index_character_map': i_c_map
     }
+
 
 def read_transition_mat(path, text_file, is_pickle, is_hebrew, regex_ignore):
     if is_pickle:
@@ -136,7 +184,7 @@ def probs_checker(f, char_index_map, cipher, transition_mtx, print_output=False)
 
     return {"score": np.sum(np.log(np.array(probs_sorted))), "attempt": dec}
 
-from difflib import SequenceMatcher
+
 def similarity(s1, s2):
     # assert len(s1) == len(s2), "Both strings must be same length"
     # n = len(s1)

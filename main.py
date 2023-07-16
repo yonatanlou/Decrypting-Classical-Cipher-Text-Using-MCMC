@@ -15,10 +15,10 @@ text_files = ["wikipedia.txt", "haaretz.txt"]
 message_heb = "המלחמה ברצועת עזה נגמרה לגמרי ושלום עולמי קיים בארץ ישראל אף על פי כך, נדקר טיפוס אחד, המצב בשווקים הידרדר משמעותית בחודש האחרון בעקבות המצב החמור במושבה מאדים"
 message_eng = "What is important are the rights of man, emancipation from prejudices, and equality of citizenship, and all these ideas Napoleon has retained in full force"
 PICKLE = False
-IS_HEBREW = False
+IS_HEBREW = True
 results = []
 
-run(PATH, "text_files/war-and-peace.txt", IS_HEBREW, PICKLE, message_eng, plot=False, iterations=100000)
+run(PATH, "text_files/war-and-peace.txt", IS_HEBREW, PICKLE, message_eng, plot=False, iterations=25000)
 
 # for txt in text_files:
 #
