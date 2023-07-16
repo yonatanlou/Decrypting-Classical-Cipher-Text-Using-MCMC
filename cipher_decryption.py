@@ -14,78 +14,56 @@ def set_seed(seed):
     np.random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
 
-def process_text(filename, regex_ignore='[^\u0590-\u05FF\uFB1D-\uFB4F ]', is_hebrew=True, regularize=True):
+def _preprocess_text(text, regex_ignore, is_hebrew):
+    pattern = re.compile(regex_ignore)
+    s = pattern.sub('', text.upper())
+    if is_hebrew:
+        s = s.translate({1470: " "})
+        normalized = unicodedata.normalize('NFKD', s)
+        s = "".join([c for c in normalized if not unicodedata.combining(c)])
+        temp = ""
+        for char in s:
+            if ord(char) not in [1524, 1523, 1522, 1521, 1520, 1518, 1515, 1480, 1472, 1475, 1478]:
+                temp += char
+        s = temp
+    return s
+
+def _build_frequency_maps(text):
     char_bigram_counts = Counter()
     char_unigram_counts = Counter()
+    for i in range(len(text) - 1):
+        char_bigram_counts[(text[i], text[i + 1])] += 1
+        char_unigram_counts[text[i]] += 1
+    char_unigram_counts[text[-1]] += 1
+    return char_bigram_counts, char_unigram_counts
 
-    with open(filename, encoding='UTF-8') as f:
-        counter = 0
-        try:
-            for line in f:
-                counter += 1
-                if counter % 5000 == 0:
-                    print(f"{counter} lines read.")
-                if not regex_ignore:
-                    pattern = re.compile(regex_ignore)
-                    s = pattern.sub('', line.upper())
-                    if is_hebrew:
-                        s = s.translate({1470: " "})
-                        normalized = unicodedata.normalize('NFKD', s)
-                        s = "".join([c for c in normalized if not unicodedata.combining(c)])
-                        temp = ""
-                        for char in s:
-                            if ord(char) not in [1524, 1523, 1522, 1521, 1520, 1518, 1515, 1480, 1472, 1475, 1478]:
-                                temp += char
-                        s = temp
-                else:
-                    s = line.upper()
-
-                line_length = len(s)
-
-                # building frequency dict for biagram and unigram.
-                if line_length > 0:
-                    for i in range(line_length - 1):
-                        char_bigram_counts[(s[i], s[i + 1])] += 1
-                        char_unigram_counts[s[i]] += 1
-
-                    # Add last character in line
-                    char_unigram_counts[s[line_length - 1]] += 1
-        except Exception as e:
-            print(e)
-
-    char_bigram_counts[(' ', ' ')] = 0
-
-    # Map each unique character from text to an index and vice-versa
-    i_c_map = dict(enumerate([q[0] for q in sorted(list(char_unigram_counts.items()), key=lambda x: x[0])]))
-    c_i_map = {v: k for k, v in i_c_map.items()}
-
-    # Create first-order transition matrix
-    n = len(c_i_map)
+def _build_transition_matrix(char_bigram_counts, character_index_map):
+    n = len(character_index_map)
     M = np.zeros((n, n))
-    if regularize:
-        M += 1
-    # build the frequency matrix for the biagram letters
     for k in char_bigram_counts.keys():
-        M[c_i_map[k[0]]][c_i_map[k[1]]] = char_bigram_counts[k]
+        M[character_index_map[k[0]]][character_index_map[k[1]]] = char_bigram_counts[k]
+    return M
 
-    # Replace any zero rows with a uniform distribution
-    # i.e. characters that appear exactly once at the end of a corpus
+def _replace_zero_rows(M):
     zero_rows = np.where(M.sum(axis=1) == 0.)
     M[zero_rows, :] = 1
     row_sums = M.sum(axis=1)
     P = M / row_sums[:, np.newaxis]
+    return P, zero_rows
 
-    print('{0} uniform row(s) inputed for characters {1}'.format(zero_rows[0].size,
-                                                                 [i_c_map[z] for z in zero_rows[0]]))
-
-    return {'char_bigram_counts': char_bigram_counts,
-            'char_unigram_counts': char_unigram_counts,
-            'bigram_freq_matrix': M,
-            'transition_matrix': P,
-            'character_index_map': c_i_map,
-            'index_character_map': i_c_map,
-            }
-
+def process_text(filename, regex_ignore='[^\u0590-\u05FF\uFB1D-\uFB4F ]', is_hebrew=True, regularize=True):
+    text = _preprocess_text(open(filename, encoding='UTF-8').read(), regex_ignore, is_hebrew)
+    char_bigram_counts, char_unigram_counts = _build_frequency_maps(text)
+    M = _build_transition_matrix(char_bigram_counts, char_unigram_counts)
+    P, zero_rows = _replace_zero_rows(M)
+    return {
+        'char_bigram_counts': char_bigram_counts,
+        'char_unigram_counts': char_unigram_counts,
+        'bigram_freq_matrix': M,
+        'transition_matrix': P,
+        'character_index_map': char_unigram_counts.keys(),
+        'index_character_map': char_unigram_counts.items(),
+    }
 
 def read_transition_mat(path, text_file, is_pickle, is_hebrew, regex_ignore):
     if is_pickle:
