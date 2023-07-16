@@ -9,11 +9,10 @@ import seaborn as sns
 import pandas as pd
 from matplotlib import pyplot as plt
 
-SEED_VALUE = 42
-random.seed(SEED_VALUE)
-np.random.seed(SEED_VALUE)
-os.environ['PYTHONHASHSEED'] = str(SEED_VALUE)
-
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 def process_text(filename, regex_ignore='[^\u0590-\u05FF\uFB1D-\uFB4F ]', is_hebrew=True, regularize=True):
     char_bigram_counts = Counter()
@@ -282,7 +281,7 @@ def plot_transition_matrix(P, i_c_map, is_hebrew=True):
     plt.show()
 
 
-def run(path, text_file, is_hebrew, is_pickle, message, iterations=10000):
+def run(path, text_file, is_hebrew, is_pickle, message, plot=False, iterations=10000):
     ##DEFS
     PATTERN_HEBREW = '[^\u0590-\u05FF\uFB1D-\uFB4F ]'
     PATTERN_ENGLISH = '[^A-Z ]'
@@ -326,43 +325,12 @@ def run(path, text_file, is_hebrew, is_pickle, message, iterations=10000):
     print('score of true key:', ground_truth_score['score'])
     print('similarity score - best prob key:', similarity(message_cleaned, mcmc_results['plaintext']))
     print('similarity score - best sim score:', similarity(message_cleaned, mcmc_results['plaintextbysim']))
-
-    plot_scores(mcmc_results['scores'], mcmc_results['sim_scores'])
+    if plot:
+        plot_scores(mcmc_results['scores'], mcmc_results['sim_scores'])
     # return {"iters": iterations, "similarity": mcmc_results["best_sim_score"], "num_of_accepts": mcmc_results["total_acceptances"], "best_score": mcmc_results["best_score"]}
     return {"similarity": mcmc_results["sim_scores"],
              "scores": mcmc_results["scores"]}
 
 
-## Read Text
 
 
-PATH = os.path.dirname(os.path.realpath(__file__))+"/"
-TEXT_FILE = 'haaretz.txt'
-
-iterations = [20000, 60000, 100000]
-text_files = ["wikipedia.txt", "haaretz.txt"]
-
-message_heb = "המלחמה ברצועת עזה נגמרה לגמרי ושלום עולמי קיים בארץ ישראל אף על פי כך, נדקר טיפוס אחד, המצב בשווקים הידרדר משמעותית בחודש האחרון בעקבות המצב החמור במושבה מאדים"
-message_eng = "What is important are the rights of man, emancipation from prejudices, and equality of citizenship, and all these ideas Napoleon has retained in full force"
-PICKLE = True
-IS_HEBREW = False
-results = []
-# for txt in text_files:
-#
-#     SEED_VALUE = 24
-#     random.seed(SEED_VALUE)
-#     np.random.seed(SEED_VALUE)
-#     os.environ['PYTHONHASHSEED'] = str(SEED_VALUE)
-#
-#     res = run(PATH, txt, IS_HEBREW, PICKLE, message_heb, 100000)
-#     res.update({"corpus": [txt]*100000})
-#     results.append(pd.DataFrame(res))
-#
-# df_results = pd.concat([results[0],results[1]])
-# df_results.to_csv("df_results_seed_24_iters_100000.csv")
-
-SEED_VALUE = 42
-random.seed(SEED_VALUE)
-np.random.seed(SEED_VALUE)
-os.environ['PYTHONHASHSEED'] = str(SEED_VALUE)
-run(PATH, "war-and-peace.txt", IS_HEBREW, PICKLE, message_eng, 100000)
