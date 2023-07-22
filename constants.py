@@ -10,3 +10,16 @@ LANGUAGES = {
     },
     "english": {"pattern": "[^A-Z ]", "alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZ "},
 }
+BAD_HEBREW_CHARS = [
+    1524,
+    1523,
+    1522,
+    1521,
+    1520,
+    1518,
+    1515,
+    1480,
+    1472,
+    1475,
+    1478,
+]
