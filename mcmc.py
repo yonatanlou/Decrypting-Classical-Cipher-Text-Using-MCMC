@@ -6,6 +6,8 @@ from matplotlib import pyplot as plt
 
 from utils import read_transition_mat, decrypt, similarity, message_encrypton
 
+np.seterr(divide="ignore")
+
 
 def set_seed(seed):
     random.seed(seed)
