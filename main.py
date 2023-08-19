@@ -24,7 +24,7 @@ PATH = os.path.dirname(os.path.realpath(__file__)) + "/"
 )
 @click.option("--message", required=True, help="The message to decrypt.")
 @click.option(
-    "--plot/--no-plot", default=False, help="Enable/disable plotting the results."
+    "--plot", default=False, help="Enable/disable plotting the results."
 )
 @click.option(
     "--iterations", default=10000, help="Number of iterations for the MCMC algorithm."

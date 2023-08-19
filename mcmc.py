@@ -97,6 +97,7 @@ def solve_mcmc(
     similarity_scores = [0.0] * iters
     mappings = []
     accepted = 0
+    max_similiarity_score = 0
     last_accepted_iter = (
         -1000
     )  # Initialize with a value to prevent printing at the beginning
@@ -116,7 +117,7 @@ def solve_mcmc(
         scores[i] = score
         if is_accepted and (i - last_accepted_iter) >= 1000:
             last_accepted_iter = i
-            print("iter:", i, f_proposal_plaus["attempt"][:300])
+            print("iter:", i, f_proposal_plaus["attempt"][:300],)
 
         plains = []
         ciphers = []
@@ -126,6 +127,9 @@ def solve_mcmc(
         f_key = ("".join(plains), "".join(ciphers))
         f_dec = decrypt(ciphertext, f_key[0], f_key[1])["plaintext"]
         similarity_scores[i] = get_similarity_score(message_cleaned, f_dec)
+        if similarity_scores[i]>max_similiarity_score:
+            max_similiarity_score = similarity_scores[i]
+            print(f_proposal_plaus["attempt"][:300], "accuracy:",f"{similarity_scores[i]}")
 
     best_key, best_attempt = get_best_mapping(ciphertext, scores, mappings)
     best_key_sim, best_attempt_sim = get_best_mapping(

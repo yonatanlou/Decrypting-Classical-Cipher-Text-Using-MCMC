@@ -49,7 +49,8 @@ The following are the arguments that you can pass to the script:
 For example, to decrypt a message in Hebrew using the text file `war-and-peace.txt` with a seed of 42 and 10,000 iterations, you would use the following command:
 
 ```python
-python decrypt_message.py --seed=42 --language=hebrew --text_file=war-and-peace.txt --message=<message> --plot=False --iterations=10000
+python main.py --seed=42 --language=english --text_file=war-and-peace.txt --message='They told me that when i will be old the war will over' --plot=0 --iterations=25000
+
 ```
 
 ## Output
